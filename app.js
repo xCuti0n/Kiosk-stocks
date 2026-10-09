@@ -75,17 +75,19 @@ function stats() {
 const isLow = i => i.stock <= i.reorder;
 
 async function sell(itemId, qty) {
-  if (!(qty >= 1)) return toast('Invalid quantity');
+  if (!(qty >= 1)) return toast('Please enter how many were sold.');
+  const it0 = db.items.find(i => i.id === itemId);
+  if (it0 && !confirm(`Sell ${qty} × ${it0.name}\nTotal: ${peso(qty * it0.price)}\n\nIs this correct?`)) return;
   let name;
   const ok = await mutate(d => {
     const it = d.items.find(i => i.id === itemId);
-    if (!it) throw new Error('Item no longer exists');
-    if (qty > it.stock) throw new Error(`Only ${it.stock} left`);
+    if (!it) throw new Error('This item no longer exists.');
+    if (qty > it.stock) throw new Error(`Sorry, only ${it.stock} left in stock.`);
     it.stock -= qty;                       // real-time stock update
     name = it.name;
     d.sales.push({ id: nid(d), itemId, qty, price: it.price, ts: Date.now(), userId: me.id });
   });
-  if (ok) { toast(`Sold ${qty} × ${name}`); render(); }
+  if (ok) { toast(`✔ Sold ${qty} × ${name}`); render(); }
 }
 
 // ---------- UI ----------
@@ -93,71 +95,82 @@ let me = null, tab = 'sell', pendingRole = null;
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const peso = n => '₱' + Number(n).toFixed(2);
-function toast(m) { const t = $('#toast'); t.textContent = m; t.hidden = false; setTimeout(() => t.hidden = true, 1800); }
+function toast(m) { const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, 4000); }
 
 document.querySelectorAll('[data-role]').forEach(b => b.onclick = () => {
   pendingRole = b.dataset.role; $('#pinForm').hidden = false; $('#pin').value = ''; $('#pin').focus();
-  $('#pinHint').textContent = 'Default PIN — owner 1234, shop keeper 0000 (owner can change them in Stock tab).';
+  $('#pinHint').textContent = 'Enter your PIN, then press "Enter".';
 });
 $('#pinForm').onsubmit = e => {
   e.preventDefault();
-  if (!ready) return toast('Connecting to cloud… try again');
+  if (!ready) return toast('Connecting… please try again in a moment.');
   const u = db.users.find(u => u.role === pendingRole && u.pin === $('#pin').value);
-  if (!u) return toast('Wrong PIN');
+  if (!u) return toast('That PIN is not correct. Please try again.');
   me = u; $('#login').hidden = true; $('#app').hidden = false;
-  $('#who').textContent = u.role === 'owner' ? 'Owner' : 'Shop keeper'; render();
+  $('#who').textContent = 'Signed in: ' + (u.role === 'owner' ? 'Owner' : 'Shop keeper'); render();
 };
 $('#logout').onclick = () => { me = null; $('#app').hidden = true; $('#login').hidden = false; $('#pinForm').hidden = true; };
-document.querySelectorAll('nav [data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; render(); });
+document.querySelectorAll('nav [data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; render(); window.scrollTo(0, 0); });
 
 function render() {
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   const low = db.items.filter(isLow);
-  $('#alerts').innerHTML = low.map(i => `<div class="warn">⚠️ <b>${esc(i.name)}</b> is low: ${i.stock} left (restock at ${i.reorder})</div>`).join('');
+  $('#alerts').innerHTML = low.map(i => `<div class="warn" role="alert">⚠️ <b>${esc(i.name)}</b> is running low — only ${i.stock} left. Time to buy more!</div>`).join('');
   $('#view').innerHTML = { sell: viewSell, inventory: viewInventory, report: viewReport }[tab]();
 }
 
+// Text size: A-/A+ buttons, remembered on this device
+let fs = +localStorage.getItem('tindahan_fs') || 0;
+const applyFs = () => document.documentElement.style.fontSize = (112.5 + fs * 15) + '%';
+applyFs();
+$('#fsUp').onclick = () => { fs = Math.min(3, fs + 1); localStorage.setItem('tindahan_fs', fs); applyFs(); };
+$('#fsDown').onclick = () => { fs = Math.max(-1, fs - 1); localStorage.setItem('tindahan_fs', fs); applyFs(); };
+
 function viewSell() {
-  if (!db.items.length) return '<p>No items yet. Ask the owner to add items in the Stock tab.</p>';
-  return `<input placeholder="Search item…" oninput="filterSell(this.value)">` +
+  if (!db.items.length) return '<p class="note">No items yet. Ask the owner to add items in the Stock tab.</p>';
+  return `<h2>What was sold?</h2><label>🔍 Find an item<input type="search" placeholder="Type the item name" oninput="filterSell(this.value)"></label>` +
     db.items.map(i => `<div class="card sellrow" data-n="${esc(i.name.toLowerCase())}">
-      <div class="row"><div><b>${esc(i.name)}</b><br><small>${peso(i.price)} · stock ${i.stock}</small></div>
-      <div class="qty"><input id="q${i.id}" type="number" min="1" value="1" inputmode="numeric">
-      <button onclick="sell(${i.id}, +document.getElementById('q${i.id}').value)" ${i.stock ? '' : 'disabled'}>Sell</button></div></div></div>`).join('');
+      <h3>${esc(i.name)}</h3><p>${peso(i.price)} each · <b>${i.stock} in stock</b></p>
+      <div class="stepper"><button type="button" class="alt" aria-label="Fewer" onclick="step(${i.id}, -1)">−</button>
+      <input id="q${i.id}" type="number" min="1" value="1" inputmode="numeric" aria-label="How many">
+      <button type="button" class="alt" aria-label="More" onclick="step(${i.id}, 1)">+</button></div>
+      <button class="big" onclick="sell(${i.id}, +document.getElementById('q${i.id}').value)" ${i.stock ? '' : 'disabled'}>${i.stock ? '✔ Sell' : 'Out of stock'}</button></div>`).join('');
 }
+window.step = (id, n) => { const q = document.getElementById('q' + id); q.value = Math.max(1, (+q.value || 1) + n); };
 window.filterSell = v => document.querySelectorAll('.sellrow').forEach(r => r.hidden = !r.dataset.n.includes(v.toLowerCase()));
 
 function viewInventory() {
   const st = stats(), owner = me.role === 'owner';
-  const add = owner ? `<form class="card" onsubmit="addItem(event)"><b>Add item</b>
-    <input name="name" placeholder="Name" required>
-    <input name="price" type="number" step="0.01" min="0" placeholder="Price" required>
-    <input name="stock" type="number" min="0" placeholder="Starting stock" required>
-    <input name="reorder" type="number" min="0" placeholder="Alert when stock is at or below" required>
-    <button>Add</button></form>` : '';
-  const list = db.items.map(i => {
+  const add = owner ? `<form class="card" onsubmit="addItem(event)"><h3>➕ Add a new item</h3>
+    <label>Item name<input name="name" required></label>
+    <label>Selling price (₱)<input name="price" type="number" step="0.01" min="0" inputmode="decimal" required></label>
+    <label>How many do you have now?<input name="stock" type="number" min="0" inputmode="numeric" required></label>
+    <label>Warn me when only this many are left<input name="reorder" type="number" min="0" inputmode="numeric" required></label>
+    <button>Add item</button></form>` : '';
+  const speedText = { fast: 'Sells fast', normal: 'Sells normally', slow: 'Sells slowly' };
+  const list = '<h2>Items in stock</h2>' + (db.items.map(i => {
     const s = st[i.id];
-    return `<div class="card"><div class="row"><b>${esc(i.name)}</b>
-      <span>${isLow(i) ? '<span class="tag low">LOW</span> ' : ''}<span class="tag ${s.speed}">${s.speed}</span></span></div>
-      <small>${peso(i.price)} · stock <b>${i.stock}</b> · sold ${s.units} in ${WINDOW_DAYS}d${s.daysLeft !== null ? ` · ~${s.daysLeft}d left` : ''}</small>
-      ${owner ? `<div class="row" style="margin-top:8px"><span></span>
-        <button class="small danger" onclick="removeItem(${i.id})">Remove</button></div>` : ''}</div>`;
-  }).join('') || '<p>No items yet.</p>';
-  const pins = owner ? `<form class="card" onsubmit="setPins(event)"><b>Change PINs</b>
-    <input name="o" type="password" inputmode="numeric" placeholder="New owner PIN (blank = keep)">
-    <input name="k" type="password" inputmode="numeric" placeholder="New shop keeper PIN (blank = keep)">
-    <button class="small">Save PINs</button></form>` : '<small>View only — the owner manages stock.</small>';
+    return `<div class="card"><div class="row"><h3>${esc(i.name)}</h3>
+      <span>${isLow(i) ? '<span class="tag low">⚠ Running low</span> ' : ''}<span class="tag ${s.speed}">${speedText[s.speed]}</span></span></div>
+      <p>${peso(i.price)} each · <b>${i.stock} in stock</b></p>
+      <p class="note">Sold ${s.units} in the last ${WINDOW_DAYS} days${s.daysLeft !== null ? ` · enough for about ${s.daysLeft} more days` : ''}</p>
+      ${owner ? `<button class="danger" onclick="removeItem(${i.id})">🗑 Remove this item</button>` : ''}</div>`;
+  }).join('') || '<p class="note">No items yet.</p>');
+  const pins = owner ? `<form class="card" onsubmit="setPins(event)"><h3>Change PINs</h3>
+    <label>New owner PIN <small>(leave empty to keep the old one)</small><input name="o" type="password" inputmode="numeric"></label>
+    <label>New shop keeper PIN <small>(leave empty to keep the old one)</small><input name="k" type="password" inputmode="numeric"></label>
+    <button>Save PINs</button></form>` : '<p class="note">You can look at the stock here. Only the owner can change it.</p>';
   const vendors = [...new Set(db.restocks.map(x => x.vendor).filter(Boolean))];
-  const none = !db.items.length;
-  const res = owner ? `<form class="card" onsubmit="resupply(event)"><b>Record resupply (vendor delivery)</b>
-    ${none ? '<br><small>Add an item above first, then you can record deliveries here.</small>' : ''}
-    <select name="item" ${none ? 'disabled' : ''}>${db.items.map(i => `<option value="${i.id}">${esc(i.name)}</option>`).join('') || '<option>No items yet</option>'}</select>
-    <input name="qty" type="number" min="1" placeholder="Quantity received" inputmode="numeric" required ${none ? 'disabled' : ''}>
-    <input name="vendor" list="vendors" placeholder="Vendor / supplier" ${none ? 'disabled' : ''}>
+  const none = !db.items.length, dis = none ? 'disabled' : '', today = new Date().toLocaleDateString('en-CA');
+  const res = owner ? `<form class="card" onsubmit="resupply(event)"><h3>📦 Record a delivery from the vendor</h3>
+    ${none ? '<p class="note">Add an item above first. Then you can record deliveries here.</p>' : ''}
+    <label>Which item?<select name="item" ${dis}>${db.items.map(i => `<option value="${i.id}">${esc(i.name)}</option>`).join('') || '<option>No items yet</option>'}</select></label>
+    <label>How many were delivered?<input name="qty" type="number" min="1" inputmode="numeric" required ${dis}></label>
+    <label>Vendor / supplier name<input name="vendor" list="vendors" ${dis}></label>
     <datalist id="vendors">${vendors.map(v => `<option value="${esc(v)}">`).join('')}</datalist>
-    <input name="cost" type="number" step="0.01" min="0" placeholder="Unit cost (optional)" ${none ? 'disabled' : ''}>
-    <input name="date" type="date" value="${new Date().toLocaleDateString('en-CA')}" max="${new Date().toLocaleDateString('en-CA')}" ${none ? 'disabled' : ''}>
-    <button ${none ? 'disabled' : ''}>Save resupply</button></form>` : '';
+    <label>Cost of each one <small>(optional)</small><input name="cost" type="number" step="0.01" min="0" inputmode="decimal" ${dis}></label>
+    <label>Date delivered<input name="date" type="date" value="${today}" max="${today}" ${dis}></label>
+    <button ${dis}>Save delivery</button></form>` : '';
   return add + res + list + pins;
 }
 window.addItem = async e => {
