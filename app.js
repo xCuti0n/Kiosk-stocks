@@ -148,14 +148,16 @@ function viewInventory() {
     <input name="k" type="password" inputmode="numeric" placeholder="New shop keeper PIN (blank = keep)">
     <button class="small">Save PINs</button></form>` : '<small>View only — the owner manages stock.</small>';
   const vendors = [...new Set(db.restocks.map(x => x.vendor).filter(Boolean))];
-  const res = owner && db.items.length ? `<form class="card" onsubmit="resupply(event)"><b>Record resupply (vendor delivery)</b>
-    <select name="item">${db.items.map(i => `<option value="${i.id}">${esc(i.name)}</option>`).join('')}</select>
-    <input name="qty" type="number" min="1" placeholder="Quantity received" inputmode="numeric" required>
-    <input name="vendor" list="vendors" placeholder="Vendor / supplier">
+  const none = !db.items.length;
+  const res = owner ? `<form class="card" onsubmit="resupply(event)"><b>Record resupply (vendor delivery)</b>
+    ${none ? '<br><small>Add an item above first, then you can record deliveries here.</small>' : ''}
+    <select name="item" ${none ? 'disabled' : ''}>${db.items.map(i => `<option value="${i.id}">${esc(i.name)}</option>`).join('') || '<option>No items yet</option>'}</select>
+    <input name="qty" type="number" min="1" placeholder="Quantity received" inputmode="numeric" required ${none ? 'disabled' : ''}>
+    <input name="vendor" list="vendors" placeholder="Vendor / supplier" ${none ? 'disabled' : ''}>
     <datalist id="vendors">${vendors.map(v => `<option value="${esc(v)}">`).join('')}</datalist>
-    <input name="cost" type="number" step="0.01" min="0" placeholder="Unit cost (optional)">
-    <input name="date" type="date" value="${new Date().toLocaleDateString('en-CA')}" max="${new Date().toLocaleDateString('en-CA')}">
-    <button>Save resupply</button></form>` : '';
+    <input name="cost" type="number" step="0.01" min="0" placeholder="Unit cost (optional)" ${none ? 'disabled' : ''}>
+    <input name="date" type="date" value="${new Date().toLocaleDateString('en-CA')}" max="${new Date().toLocaleDateString('en-CA')}" ${none ? 'disabled' : ''}>
+    <button ${none ? 'disabled' : ''}>Save resupply</button></form>` : '';
   return add + res + list + pins;
 }
 window.addItem = async e => {
