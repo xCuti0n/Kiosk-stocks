@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#2e7d32">
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css">
+<title>Tindahan Stock Tracker</title>
+</head>
+<body>
+<div id="login" class="screen">
+  <h1>🏪 Tindahan Tracker</h1>
+  <p>Who is using the app?</p>
+  <button data-role="owner" class="big">Owner</button>
+  <button data-role="keeper" class="big alt">Shop keeper</button>
+  <form id="pinForm" hidden>
+    <input id="pin" type="password" inputmode="numeric" placeholder="PIN" autocomplete="off">
+    <button class="big">Enter</button>
+    <small id="pinHint"></small>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <header><span id="who"></span><button id="logout">Log out</button></header>
+  <div id="alerts"></div>
+  <main id="view"></main>
+  <nav>
+    <button data-tab="sell">Sell</button>
+    <button data-tab="inventory">Stock</button>
+    <button data-tab="report">Sales</button>
+  </nav>
+</div>
+
+<div id="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
