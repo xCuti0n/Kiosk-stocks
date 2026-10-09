@@ -66,3 +66,9 @@ Dev tool: Google Antigravity | Claude Sonnet 5.5 Medium · Language: JavaScript 
 
 ## Limitations
 Data lives on one device (clear browser data = data loss); PINs are a simple access check, not strong security. A cloud backend (e.g. Firebase) is the natural next step.
+
+## Sharing data across devices (Firebase)
+1. console.firebase.google.com -> create project -> Build -> Firestore Database -> Create (test mode).
+2. Project settings -> Add web app -> copy `firebaseConfig` into `firebase-config.js`.
+3. Commit and push; every device now shares one inventory in real time. Without a config the app stores data locally only.
+

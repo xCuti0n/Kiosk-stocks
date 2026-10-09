@@ -1,5 +1,7 @@
 'use strict';
-// ---------- Database (localStorage; tables: users, items, sales) ----------
+// ---------- Database (tables: users, items, sales) ----------
+// Cloud mode: one Firestore document shared by all devices (needs firebase-config.js).
+// Local mode: browser localStorage only (used when no Firebase config is set).
 const KEY = 'tindahan_db_v1';
 const DEFAULT_DB = {
   users: [
@@ -7,12 +9,45 @@ const DEFAULT_DB = {
     { id: 2, role: 'keeper', pin: '0000' }
   ],
   items: [],   // {id, name, price, stock, reorder}
-  sales: [],   // {id, itemId, qty, price, ts, userId}
+  sales: [],   // {id, itemId, qty, price, ts, userId}  (last 30 days kept)
   seq: 1
 };
-let db = JSON.parse(localStorage.getItem(KEY) || 'null') || structuredClone(DEFAULT_DB);
-const save = () => localStorage.setItem(KEY, JSON.stringify(db));
-const nid = () => db.seq++;
+const KEEP_MS = 30 * 864e5;
+const CLOUD = !!(window.FIREBASE_CONFIG && window.firebase);
+let db = CLOUD ? structuredClone(DEFAULT_DB)
+               : (JSON.parse(localStorage.getItem(KEY) || 'null') || structuredClone(DEFAULT_DB));
+let ready = !CLOUD, ref = null;
+const nid = d => d.seq++;
+
+if (CLOUD) {
+  firebase.initializeApp(window.FIREBASE_CONFIG);
+  const fs = firebase.firestore();
+  ref = fs.doc('stores/main');
+  ref.onSnapshot(snap => {
+    if (!snap.exists) { ref.set(DEFAULT_DB); return; }
+    db = snap.data(); ready = true;
+    const a = document.activeElement;
+    if (me && !(a && a.tagName === 'INPUT' && a.value)) render();   // don't wipe half-typed input
+  }, err => toast('Cloud error: ' + err.message));
+}
+
+// Apply a change to the latest data. fn(d) mutates d and may throw Error(msg) to cancel.
+async function mutate(fn) {
+  try {
+    if (CLOUD) {
+      await firebase.firestore().runTransaction(async tx => {
+        const snap = await tx.get(ref);
+        const d = snap.exists ? snap.data() : structuredClone(DEFAULT_DB);
+        fn(d);
+        d.sales = d.sales.filter(s => s.ts >= Date.now() - KEEP_MS);
+        tx.set(ref, d);
+      });
+    } else {
+      fn(db); localStorage.setItem(KEY, JSON.stringify(db));
+    }
+    return true;
+  } catch (e) { toast(e.message || 'Could not save'); return false; }
+}
 
 // ---------- Business logic ----------
 const WINDOW_DAYS = 14;
@@ -35,13 +70,18 @@ function stats() {
 }
 const isLow = i => i.stock <= i.reorder;
 
-function sell(itemId, qty) {
-  const it = db.items.find(i => i.id === itemId);
-  if (!it || qty < 1) return toast('Invalid quantity');
-  if (qty > it.stock) return toast(`Only ${it.stock} left`);
-  it.stock -= qty;                       // real-time stock update
-  db.sales.push({ id: nid(), itemId, qty, price: it.price, ts: Date.now(), userId: me.id });
-  save(); toast(`Sold ${qty} × ${it.name}`); render();
+async function sell(itemId, qty) {
+  if (!(qty >= 1)) return toast('Invalid quantity');
+  let name;
+  const ok = await mutate(d => {
+    const it = d.items.find(i => i.id === itemId);
+    if (!it) throw new Error('Item no longer exists');
+    if (qty > it.stock) throw new Error(`Only ${it.stock} left`);
+    it.stock -= qty;                       // real-time stock update
+    name = it.name;
+    d.sales.push({ id: nid(d), itemId, qty, price: it.price, ts: Date.now(), userId: me.id });
+  });
+  if (ok) { toast(`Sold ${qty} × ${name}`); render(); }
 }
 
 // ---------- UI ----------
@@ -57,6 +97,7 @@ document.querySelectorAll('[data-role]').forEach(b => b.onclick = () => {
 });
 $('#pinForm').onsubmit = e => {
   e.preventDefault();
+  if (!ready) return toast('Connecting to cloud… try again');
   const u = db.users.find(u => u.role === pendingRole && u.pin === $('#pin').value);
   if (!u) return toast('Wrong PIN');
   me = u; $('#login').hidden = true; $('#app').hidden = false;
@@ -105,24 +146,25 @@ function viewInventory() {
     <button class="small">Save PINs</button></form>` : '<small>View only — the owner manages stock.</small>';
   return add + list + pins;
 }
-window.addItem = e => {
+window.addItem = async e => {
   e.preventDefault(); const f = new FormData(e.target);
-  db.items.push({ id: nid(), name: f.get('name').trim(), price: +f.get('price'), stock: +f.get('stock'), reorder: +f.get('reorder') });
-  save(); toast('Item added'); render();
+  const it = { name: f.get('name').trim(), price: +f.get('price'), stock: +f.get('stock'), reorder: +f.get('reorder') };
+  if (await mutate(d => d.items.push({ id: nid(d), ...it }))) { toast('Item added'); render(); }
 };
-window.restock = id => {
+window.restock = async id => {
   const q = +document.getElementById('r' + id).value; if (!(q > 0)) return toast('Enter a quantity');
-  db.items.find(i => i.id === id).stock += q; save(); toast('Stock updated'); render();
+  if (await mutate(d => { const i = d.items.find(i => i.id === id); if (!i) throw new Error('Item no longer exists'); i.stock += q; })) { toast('Stock updated'); render(); }
 };
-window.removeItem = id => {
+window.removeItem = async id => {
   if (!confirm('Remove this item? Past sales records are kept.')) return;
-  db.items = db.items.filter(i => i.id !== id); save(); render();
+  if (await mutate(d => { d.items = d.items.filter(i => i.id !== id); })) render();
 };
-window.setPins = e => {
-  e.preventDefault(); const f = new FormData(e.target);
-  if (f.get('o')) db.users.find(u => u.role === 'owner').pin = f.get('o');
-  if (f.get('k')) db.users.find(u => u.role === 'keeper').pin = f.get('k');
-  save(); toast('PINs saved'); render();
+window.setPins = async e => {
+  e.preventDefault(); const f = new FormData(e.target), o = f.get('o'), k = f.get('k');
+  if (await mutate(d => {
+    if (o) d.users.find(u => u.role === 'owner').pin = o;
+    if (k) d.users.find(u => u.role === 'keeper').pin = k;
+  })) { toast('PINs saved'); render(); }
 };
 
 function viewReport() {
