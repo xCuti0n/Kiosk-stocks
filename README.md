@@ -45,6 +45,15 @@ flowchart LR
 erDiagram
   USERS ||--o{ SALES : records
   ITEMS ||--o{ SALES : "sold in"
+  USERS ||--o{ RESTOCKS : records
+  ITEMS ||--o{ RESTOCKS : "resupplied in"
+  RESTOCKS { int id PK
+          int itemId FK
+          int userId FK
+          int qty
+          string vendor
+          float cost "unit cost, optional"
+          datetime ts "delivery date" }
   USERS { int id PK
           string role "owner|keeper"
           string pin }
